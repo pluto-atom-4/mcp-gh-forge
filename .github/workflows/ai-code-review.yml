@@ -1,8 +1,9 @@
 name: AI Code Review
 
 on:
-  pull_request:
-    types: [opened, synchronize]
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
 
 permissions:
   contents: read
@@ -12,21 +13,32 @@ jobs:
   ai-review:
     name: AI Code Review
     runs-on: ubuntu-latest
-    # Only auto-approve PRs created by personal account (prevents external abuse)
-    if: github.actor == 'pluto-atom-4' && github.event.pull_request.draft == false
+    # Only auto-approve PRs created by personal account, only once CI has passed
+    # (prevents external abuse and decouples approval from an actual quality gate)
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.actor.login == 'pluto-atom-4' &&
+      github.event.workflow_run.event == 'pull_request'
 
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Check CI Status
-        id: check-ci
+      - name: Find associated PR
+        id: find-pr
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.BOT_TOKEN }}
           script: |
-            const pr = context.payload.pull_request;
+            const { data: pulls } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head: `${context.repo.owner}:${context.payload.workflow_run.head_branch}`,
+              state: 'open'
+            });
+            const pr = pulls[0];
+            if (!pr) {
+              core.setFailed('No open PR found for branch ' + context.payload.workflow_run.head_branch);
+              return;
+            }
+            core.setOutput('number', pr.number);
             console.log('PR: ' + pr.number);
             console.log('Author: ' + pr.user.login);
             console.log('Draft: ' + pr.draft);
@@ -39,7 +51,7 @@ jobs:
             github.rest.pulls.createReview({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              pull_number: context.issue.number,
+              pull_number: ${{ steps.find-pr.outputs.number }},
               event: 'APPROVE',
-              body: '✅ AI Code Review Approved\n\nAll CI checks must pass before merge:\n- Type checking\n- Build\n- Tests\n\nReady for manual merge when CI passes.'
+              body: '✅ AI Code Review Approved\n\nCI passed (lint, format, secretlint, npm audit).\n\nReady for manual merge.'
             })
