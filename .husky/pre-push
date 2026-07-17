@@ -1,0 +1,2 @@
+npm audit --audit-level=high
+npx secretlint --secretlintrc .secretlintrc.json "**/*"
