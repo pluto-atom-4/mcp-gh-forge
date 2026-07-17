@@ -9,28 +9,33 @@ permissions:
   pull-requests: write
 
 jobs:
-  ai-review:
-    name: AI Code Review
+  ci:
+    name: ci
     runs-on: ubuntu-latest
-    # Only auto-approve PRs created by personal account (prevents external abuse)
-    if: github.actor == 'pluto-atom-4' && github.event.pull_request.draft == false
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Check CI Status
-        id: check-ci
-        uses: actions/github-script@v7
+      - uses: actions/setup-node@v4
         with:
-          github-token: ${{ secrets.BOT_TOKEN }}
-          script: |
-            const pr = context.payload.pull_request;
-            console.log('PR: ' + pr.number);
-            console.log('Author: ' + pr.user.login);
-            console.log('Draft: ' + pr.draft);
+          node-version: 24
+          cache: npm
 
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm run secretlint
+      - run: npm audit --audit-level=high
+
+  ai-review:
+    name: AI Code Review
+    needs: ci
+    runs-on: ubuntu-latest
+    # Only auto-approve PRs created by personal account (prevents external abuse).
+    # needs: ci means this job never runs, let alone approves, unless CI passed.
+    if: github.actor == 'pluto-atom-4' && github.event.pull_request.draft == false
+
+    steps:
       - name: Approve PR
         uses: actions/github-script@v7
         with:
@@ -41,5 +46,5 @@ jobs:
               repo: context.repo.repo,
               pull_number: context.issue.number,
               event: 'APPROVE',
-              body: '✅ AI Code Review Approved\n\nAll CI checks must pass before merge:\n- Type checking\n- Build\n- Tests\n\nReady for manual merge when CI passes.'
+              body: '✅ AI Code Review Approved\n\nCI passed (lint, format, secretlint, npm audit).\n\nReady for manual merge.'
             })
